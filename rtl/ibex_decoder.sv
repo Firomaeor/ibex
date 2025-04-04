@@ -15,6 +15,7 @@
 
 module ibex_decoder #(
   parameter bit RV32E               = 0,
+  parameter bit RV32A               = 0,
   parameter ibex_pkg::rv32m_e RV32M = ibex_pkg::RV32MFast,
   parameter ibex_pkg::rv32b_e RV32B = ibex_pkg::RV32BNone,
   parameter bit BranchTargetALU     = 0
@@ -92,6 +93,7 @@ module ibex_decoder #(
                                                       // word or word
   output logic                 data_sign_extension_o, // sign extension for data read from
                                                       // memory
+  output ibex_pkg::amo_op_e    data_amo_op_o,         // atomic memory operation                                                  
 
   // jump/branches
   output logic                 jump_in_dec_o,         // jump is being calculated in ALU
@@ -227,6 +229,7 @@ module ibex_decoder #(
     data_type_o           = 2'b00;
     data_sign_extension_o = 1'b0;
     data_req_o            = 1'b0;
+    data_amo_op_o         = AMO_NONE;
 
     illegal_insn          = 1'b0;
     ebrk_insn_o           = 1'b0;
@@ -558,6 +561,39 @@ module ibex_decoder #(
               illegal_insn = 1'b1;
             end
           endcase
+        end
+      end
+
+      /////////////
+      //  RV32A  //
+      /////////////
+
+      OPCODE_AMO: begin
+        if (RV32A) begin : g_rv32a_decoder
+          data_req_o                = 1'b1;
+          rf_ren_a_o                = 1'b1;
+
+          unique case (instr[31:27])
+            5'b00010: data_amo_op_o = AMO_LR;
+
+            5'b00011: begin 
+              data_amo_op_o         = AMO_SC;
+              data_we_o             = 1'b1;
+            end
+
+            5'b00001: data_amo_op_o = AMO_SWAP;
+            5'b00000: data_amo_op_o = AMO_ADD;
+            5'b00100: data_amo_op_o = AMO_XOR;
+            5'b01100: data_amo_op_o = AMO_AND;
+            5'b01000: data_amo_op_o = AMO_OR;
+            5'b10000: data_amo_op_o = AMO_MIN;
+            5'b10100: data_amo_op_o = AMO_MAX;
+            5'b11000: data_amo_op_o = AMO_MINU;
+            5'b11100: data_amo_op_o = AMO_MAXU;
+            default:  illegal_insn  = 1'b1;
+          endcase
+        end else begin : g_no_rv32a_decoder
+          illegal_insn              = 1'b1;
         end
       end
 
@@ -1133,6 +1169,19 @@ module ibex_decoder #(
 
             default: ;
           endcase
+        end
+      end
+
+      /////////////
+      //  RV32A  //
+      /////////////
+
+      OPCODE_AMO: begin
+        if (RV32A) begin : g_rv32a_alu_decoder
+          alu_op_a_mux_sel_o = OP_A_REG_A;
+          alu_op_b_mux_sel_o = OP_B_IMM;
+          alu_operator_o     = ALU_ADD;
+          imm_b_mux_sel_o    = IMM_B_ZERO;
         end
       end
 

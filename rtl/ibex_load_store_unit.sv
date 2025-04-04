@@ -16,7 +16,8 @@
 
 module ibex_load_store_unit #(
   parameter bit          MemECC       = 1'b0,
-  parameter int unsigned MemDataWidth = MemECC ? 32 + 7 : 32
+  parameter int unsigned MemDataWidth = MemECC ? 32 + 7 : 32,
+  parameter bit          RV32A        = 1'b0
 ) (
   input  logic         clk_i,
   input  logic         rst_ni,
@@ -35,28 +36,30 @@ module ibex_load_store_unit #(
   input  logic [MemDataWidth-1:0] data_rdata_i,
 
   // signals to/from ID/EX stage
-  input  logic         lsu_we_i,             // write enable                     -> from ID/EX
-  input  logic [1:0]   lsu_type_i,           // data type: word, half word, byte -> from ID/EX
-  input  logic [31:0]  lsu_wdata_i,          // data to write to memory          -> from ID/EX
-  input  logic         lsu_sign_ext_i,       // sign extension                   -> from ID/EX
+  input  logic                lsu_we_i,             // write enable                     -> from ID/EX
+  input  logic [1:0]          lsu_type_i,           // data type: word, half word, byte -> from ID/EX
+  input  logic [31:0]         lsu_wdata_i,          // data to write to memory          -> from ID/EX
+  input  logic                lsu_sign_ext_i,       // sign extension                   -> from ID/EX
 
-  output logic [31:0]  lsu_rdata_o,          // requested data                   -> to ID/EX
-  output logic         lsu_rdata_valid_o,
-  input  logic         lsu_req_i,            // data request                     -> from ID/EX
+  output logic [31:0]         lsu_rdata_o,          // requested data                   -> to ID/EX
+  output logic                lsu_rdata_valid_o,
+  input  logic                lsu_req_i,            // data request                     -> from ID/EX
 
-  input  logic [31:0]  adder_result_ex_i,    // address computed in ALU          -> from ID/EX
+  input  logic [31:0]         adder_result_ex_i,    // address computed in ALU          -> from ID/EX
 
-  output logic         addr_incr_req_o,      // request address increment for
-                                              // misaligned accesses              -> to ID/EX
-  output logic [31:0]  addr_last_o,          // address of last transaction      -> to controller
-                                              // -> mtval
-                                              // -> AGU for misaligned accesses
+  output logic                addr_incr_req_o,      // request address increment for
+                                                     // misaligned accesses              -> to ID/EX
+  output logic [31:0]         addr_last_o,          // address of last transaction      -> to controller
+                                                     // -> mtval
+                                                     // -> AGU for misaligned accesses
 
-  output logic         lsu_req_done_o,       // Signals that data request is complete
-                                              // (only need to await final data
-                                              // response)                        -> to ID/EX
+  output logic                lsu_req_done_o,       // Signals that data request is complete
+                                                     // (only need to await final data
+                                                     // response)                        -> to ID/EX
 
-  output logic         lsu_resp_valid_o,     // LSU has response from transaction -> to ID/EX
+  output logic                lsu_resp_valid_o,     // LSU has response from transaction -> to ID/EX
+
+  input  ibex_pkg::amo_op_e   lsu_amo_op_i,         // AMO operation                    -> from ID/EX
 
   // exception signals
   output logic         load_err_o,
@@ -69,6 +72,8 @@ module ibex_load_store_unit #(
   output logic         perf_load_o,
   output logic         perf_store_o
 );
+
+  import ibex_pkg::*;
 
   logic [31:0]  data_addr;
   logic [31:0]  data_addr_w_aligned;
@@ -101,15 +106,45 @@ module ibex_load_store_unit #(
   logic         lsu_err_q, lsu_err_d;
   logic         data_intg_err, data_or_pmp_err;
 
+
+  logic [31:0]  amo_alu_result;
+  logic [31:0]  amo_sc_return_q;
+  logic [31:0]  amo_reserved_addr_q;
+
+  logic         data_we_amo;
+  logic         data_we_sc_n;  
+  logic         amo_reserved_q;
+
+  if (~RV32A) begin : g_no_rv32a_signals 
+    logic [31:0]  unused_amo_alu_result;
+    assign unused_amo_alu_result = amo_alu_result;
+
+    logic [31:0] unused_amo_sc_return_q;
+    assign unused_amo_sc_return_q = amo_sc_return_q;
+
+    logic [31:0] unused_amo_reserved_addr;
+    assign unused_amo_reserved_addr = amo_reserved_addr_q;
+
+    logic unused_amo_we;
+    assign unused_amo_we = data_we_amo;
+
+    logic unused_amo_reserved;
+    assign unused_amo_reserved = amo_reserved_q;
+
+    logic unused_data_we_sc_n;
+    assign unused_data_we_sc_n = data_we_sc_n;
+  end
+
   typedef enum logic [2:0]  {
     IDLE, WAIT_GNT_MIS, WAIT_RVALID_MIS, WAIT_GNT,
-    WAIT_RVALID_MIS_GNTS_DONE
+    WAIT_RVALID_MIS_GNTS_DONE, AMO_STORE
   } ls_fsm_e;
 
   ls_fsm_e ls_fsm_cs, ls_fsm_ns;
 
   assign data_addr   = adder_result_ex_i;
   assign data_offset = data_addr[1:0];
+
 
   ///////////////////
   // BE generation //
@@ -172,14 +207,30 @@ module ibex_load_store_unit #(
 
   // prepare data to be written to the memory
   // we handle misaligned accesses, half word and byte accesses here
-  always_comb begin
-    unique case (data_offset)
-      2'b00:   data_wdata =  lsu_wdata_i[31:0];
-      2'b01:   data_wdata = {lsu_wdata_i[23:0], lsu_wdata_i[31:24]};
-      2'b10:   data_wdata = {lsu_wdata_i[15:0], lsu_wdata_i[31:16]};
-      2'b11:   data_wdata = {lsu_wdata_i[ 7:0], lsu_wdata_i[31: 8]};
-      default: data_wdata =  lsu_wdata_i[31:0];
-    endcase // case (data_offset)
+  if (RV32A) begin : g_rv32a_wdata_alignment
+    always_comb begin
+      if ({ ! (lsu_amo_op_i inside {AMO_NONE, AMO_LR, AMO_SC}) }) begin 
+        data_wdata = amo_alu_result;
+      end else begin
+        unique case (data_offset)
+          2'b00:   data_wdata =  lsu_wdata_i[31:0];
+          2'b01:   data_wdata = {lsu_wdata_i[23:0], lsu_wdata_i[31:24]};
+          2'b10:   data_wdata = {lsu_wdata_i[15:0], lsu_wdata_i[31:16]};
+          2'b11:   data_wdata = {lsu_wdata_i[ 7:0], lsu_wdata_i[31: 8]};
+          default: data_wdata =  lsu_wdata_i[31:0];
+        endcase // case (data_offset)
+      end
+    end
+  end else begin : g_no_rv32a_wdata_alignment
+    always_comb begin
+      unique case (data_offset)
+        2'b00:   data_wdata =  lsu_wdata_i[31:0];
+        2'b01:   data_wdata = {lsu_wdata_i[23:0], lsu_wdata_i[31:24]};
+        2'b10:   data_wdata = {lsu_wdata_i[15:0], lsu_wdata_i[31:16]};
+        2'b11:   data_wdata = {lsu_wdata_i[ 7:0], lsu_wdata_i[31: 8]};
+        default: data_wdata =  lsu_wdata_i[31:0];
+      endcase // case (data_offset)
+    end
   end
 
   /////////////////////
@@ -365,20 +416,22 @@ module ibex_load_store_unit #(
 
   // FSM
   always_comb begin
-    ls_fsm_ns       = ls_fsm_cs;
+    ls_fsm_ns               = ls_fsm_cs;
 
-    data_req_o          = 1'b0;
-    addr_incr_req_o     = 1'b0;
-    handle_misaligned_d = handle_misaligned_q;
-    pmp_err_d           = pmp_err_q;
-    lsu_err_d           = lsu_err_q;
+    data_req_o              = 1'b0;
+    addr_incr_req_o         = 1'b0;
+    handle_misaligned_d     = handle_misaligned_q;
+    pmp_err_d               = pmp_err_q;
+    lsu_err_d               = lsu_err_q;
 
-    addr_update         = 1'b0;
-    ctrl_update         = 1'b0;
-    rdata_update        = 1'b0;
+    addr_update             = 1'b0;
+    ctrl_update             = 1'b0;
+    rdata_update            = 1'b0;
 
-    perf_load_o         = 1'b0;
-    perf_store_o        = 1'b0;
+    perf_load_o             = 1'b0;
+    perf_store_o            = 1'b0;
+
+    data_we_amo  = 1'b0;
 
     unique case (ls_fsm_cs)
 
@@ -388,14 +441,27 @@ module ibex_load_store_unit #(
           data_req_o   = 1'b1;
           pmp_err_d    = data_pmp_err_i;
           lsu_err_d    = 1'b0;
-          perf_load_o  = ~lsu_we_i;
-          perf_store_o = lsu_we_i;
+          if (lsu_amo_op_i inside {AMO_NONE, AMO_LR}) begin
+            perf_load_o  = ~lsu_we_i;
+            perf_store_o = lsu_we_i;
+          end else begin 
+            perf_load_o  = 1'b1;
+            perf_store_o = 1'b1;
+          end
 
           if (data_gnt_i) begin
             ctrl_update         = 1'b1;
             addr_update         = 1'b1;
-            handle_misaligned_d = split_misaligned_access;
-            ls_fsm_ns           = split_misaligned_access ? WAIT_RVALID_MIS : IDLE;
+            if (lsu_amo_op_i == AMO_NONE) begin
+              handle_misaligned_d = split_misaligned_access;
+              ls_fsm_ns           = split_misaligned_access ? WAIT_RVALID_MIS : IDLE;
+            end else if (lsu_amo_op_i != AMO_NONE && split_misaligned_access) begin
+              // AMOs cannot be split
+              lsu_err_d           = 1'b1;
+              ls_fsm_ns           = IDLE;
+            end else begin
+              ls_fsm_ns           = lsu_amo_op_i inside {AMO_LR, AMO_SC} ? IDLE : AMO_STORE;
+            end
           end else begin
             ls_fsm_ns           = split_misaligned_access ? WAIT_GNT_MIS    : WAIT_GNT;
           end
@@ -478,6 +544,15 @@ module ibex_load_store_unit #(
         end
       end
 
+      AMO_STORE: begin
+        data_req_o    = 1'b1;
+        data_we_amo   = 1'b1;
+        if (data_gnt_i || pmp_err_q) begin
+          ctrl_update = 1'b1;
+          ls_fsm_ns   = IDLE;
+        end
+      end
+
       default: begin
         ls_fsm_ns = IDLE;
       end
@@ -502,24 +577,126 @@ module ibex_load_store_unit #(
   end
 
   /////////////
+  //  RV32A  //
+  /////////////
+
+  if (RV32A) begin : g_rv32a
+
+    // Zalrsc
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+      if (!rst_ni) begin
+        amo_reserved_q          <= 1'b0;
+        amo_reserved_addr_q     <= 32'h0;
+      end else if (lsu_resp_valid_o) begin
+        if (lsu_amo_op_i == AMO_LR) begin
+          // LR sets reservation
+          amo_reserved_q        <= 1'b1;
+          amo_reserved_addr_q   <= data_addr;
+        end else if (lsu_amo_op_i == AMO_SC) begin
+          // Any SC successful or failed clears reservation
+          amo_reserved_q        <= 1'b0;
+        end
+      end
+    end
+
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+      if (!rst_ni) begin
+        amo_sc_return_q         <= 32'h0;
+      end else begin
+        if (lsu_amo_op_i == AMO_SC && data_we_sc_n) begin
+          amo_sc_return_q       <= 32'h1;
+        end else begin
+          amo_sc_return_q       <= 32'h0;
+        end
+      end
+    end
+
+    // Zaamo
+    // logic for min/max operations
+    logic         lt, signd;
+    logic [31:0]  cmp_operand_a, cmp_operand_b;
+
+    assign signd = lsu_amo_op_i inside {AMO_MIN, AMO_MAX};
+
+    //flip msb if signed
+    assign cmp_operand_a = {data_rdata_ext[31] ^ signd, data_rdata_ext[30:0]};
+    assign cmp_operand_b = {lsu_wdata_i[31] ^ signd, lsu_wdata_i[30:0]};
+
+    assign lt = cmp_operand_a < cmp_operand_b;
+
+    always_comb begin
+      data_we_sc_n      = 1'b0;
+      amo_alu_result    = 32'h0;
+      unique case (lsu_amo_op_i)
+        AMO_SC:   begin 
+          data_we_sc_n  = (~amo_reserved_q | (data_addr != amo_reserved_addr_q));
+        end
+        // AMO ALU operations
+        AMO_ADD:  amo_alu_result = data_rdata_ext + lsu_wdata_i;
+        AMO_AND:  amo_alu_result = data_rdata_ext & lsu_wdata_i;
+        AMO_OR:   amo_alu_result = data_rdata_ext | lsu_wdata_i;
+        AMO_XOR:  amo_alu_result = data_rdata_ext ^ lsu_wdata_i;
+        AMO_SWAP: amo_alu_result = lsu_wdata_i;
+        AMO_MIN:  amo_alu_result = lt ? data_rdata_ext : lsu_wdata_i;
+        AMO_MAX:  amo_alu_result = ~lt ? data_rdata_ext : lsu_wdata_i;
+        AMO_MINU: amo_alu_result = lt ? data_rdata_ext : lsu_wdata_i;
+        AMO_MAXU: amo_alu_result = ~lt ? data_rdata_ext : lsu_wdata_i;
+        default:  amo_alu_result = 32'h0;
+      endcase
+    end
+  end else begin : g_no_rv32a
+    assign amo_alu_result       = 32'h0;
+
+    assign amo_sc_return_q      = 32'h0;
+    assign amo_reserved_q       = 1'b0;
+    assign amo_reserved_addr_q  = 32'h0;
+    assign data_we_sc_n         = 1'b0;
+  end
+
+  /////////////
   // Outputs //
   /////////////
 
-  assign data_or_pmp_err    = lsu_err_q | data_bus_err_i | pmp_err_q;
-  assign lsu_resp_valid_o   = (data_rvalid_i | pmp_err_q) & (ls_fsm_cs == IDLE);
-  assign lsu_rdata_valid_o  =
-    (ls_fsm_cs == IDLE) & data_rvalid_i & ~data_or_pmp_err & ~data_we_q & ~data_intg_err;
+  if (RV32A) begin : g_rv32a_outputs
 
-  // output to register file
-  assign lsu_rdata_o = data_rdata_ext;
+    assign data_or_pmp_err    = lsu_err_q | data_bus_err_i | pmp_err_q;
+    assign lsu_resp_valid_o   = (data_rvalid_i | pmp_err_q) & (ls_fsm_cs == IDLE);
+    assign lsu_rdata_valid_o  =
+      ((ls_fsm_cs == IDLE) & data_rvalid_i & ~data_or_pmp_err & ~data_we_q & ~data_intg_err) 
+      | (lsu_amo_op_i == AMO_SC & (ls_fsm_cs == IDLE) & data_rvalid_i & ~data_or_pmp_err); 
 
-  // output data address must be word aligned
-  assign data_addr_w_aligned = {data_addr[31:2], 2'b00};
+    // output to register file
+    assign lsu_rdata_o = lsu_amo_op_i == AMO_SC ? amo_sc_return_q : data_rdata_ext;
 
-  // output to data interface
-  assign data_addr_o   = data_addr_w_aligned;
-  assign data_we_o     = lsu_we_i;
-  assign data_be_o     = data_be;
+    // output data address must be word aligned
+    assign data_addr_w_aligned = {data_addr[31:2], 2'b00};
+
+    // output to data interface
+    assign data_addr_o   = data_addr_w_aligned;
+    assign data_we_o     = (lsu_we_i | data_we_amo) & ~data_we_sc_n;
+    assign data_be_o     = data_be;
+
+  end else begin : g_no_rv32a_outputs
+
+    assign data_or_pmp_err    = lsu_err_q | data_bus_err_i | pmp_err_q;
+    assign lsu_resp_valid_o   = (data_rvalid_i | pmp_err_q) & (ls_fsm_cs == IDLE);
+    assign lsu_rdata_valid_o  =
+      (ls_fsm_cs == IDLE) & data_rvalid_i & ~data_or_pmp_err & ~data_we_q & ~data_intg_err;
+
+    // output to register file
+    assign lsu_rdata_o = data_rdata_ext;
+
+    // output data address must be word aligned
+    assign data_addr_w_aligned = {data_addr[31:2], 2'b00};
+
+    // output to data interface
+    assign data_addr_o   = data_addr_w_aligned;
+    assign data_we_o     = lsu_we_i;
+    assign data_be_o     = data_be;
+
+  end
+
+  
 
   /////////////////////////////////////
   // Write data integrity generation //

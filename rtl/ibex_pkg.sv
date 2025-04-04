@@ -62,6 +62,7 @@ package ibex_pkg;
     OPCODE_OP_IMM   = 7'h13,
     OPCODE_AUIPC    = 7'h17,
     OPCODE_STORE    = 7'h23,
+    OPCODE_AMO      = 7'h2f,
     OPCODE_OP       = 7'h33,
     OPCODE_LUI      = 7'h37,
     OPCODE_BRANCH   = 7'h63,
@@ -193,6 +194,26 @@ package ibex_pkg;
   } md_op_e;
 
 
+  /////////////
+  //  RV32A  //
+  /////////////
+
+  typedef enum logic [3:0] {
+    AMO_NONE,
+    AMO_LR,
+    AMO_SC,
+    AMO_SWAP,
+    AMO_ADD,
+    AMO_XOR,
+    AMO_AND,
+    AMO_OR,
+    AMO_MIN,
+    AMO_MAX,
+    AMO_MINU,
+    AMO_MAXU
+  } amo_op_e;
+
+
   //////////////////////////////////
   // Control and status registers //
   //////////////////////////////////
@@ -262,6 +283,7 @@ package ibex_pkg;
     IMM_B_B,
     IMM_B_U,
     IMM_B_J,
+    IMM_B_ZERO,
     IMM_B_INCR_PC,
     IMM_B_INCR_ADDR
   } imm_b_sel_e;

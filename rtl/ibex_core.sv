@@ -23,6 +23,7 @@ module ibex_core import ibex_pkg::*; #(
   parameter int unsigned            MHPMCounterNum   = 0,
   parameter int unsigned            MHPMCounterWidth = 40,
   parameter bit                     RV32E            = 1'b0,
+  parameter bit                     RV32A            = 1'b0,
   parameter rv32m_e                 RV32M            = RV32MFast,
   parameter rv32b_e                 RV32B            = RV32BNone,
   parameter bit                     BranchTargetALU  = 1'b0,
@@ -310,6 +311,9 @@ module ibex_core import ibex_pkg::*; #(
   logic        lsu_resp_valid;
   logic        lsu_resp_err;
 
+  // RV32A
+  ibex_pkg::amo_op_e  lsu_amo_op; 
+
   // Signals between instruction core interface and pipe (if and id stages)
   logic        instr_req_int;          // Id stage asserts a req to instruction core interface
   logic        instr_req_gated;
@@ -544,6 +548,7 @@ module ibex_core import ibex_pkg::*; #(
 
   ibex_id_stage #(
     .RV32E          (RV32E),
+    .RV32A          (RV32A),
     .RV32M          (RV32M),
     .RV32B          (RV32B),
     .BranchTargetALU(BranchTargetALU),
@@ -639,6 +644,7 @@ module ibex_core import ibex_pkg::*; #(
     .lsu_sign_ext_o(lsu_sign_ext),  // to load store unit
     .lsu_wdata_o   (lsu_wdata),  // to load store unit
     .lsu_req_done_i(lsu_req_done),  // from load store unit
+    .lsu_amo_op_o  (lsu_amo_op),  // to load store unit
 
     .lsu_addr_incr_req_i(lsu_addr_incr_req),
     .lsu_addr_last_i    (lsu_addr_last),
@@ -763,7 +769,8 @@ module ibex_core import ibex_pkg::*; #(
 
   ibex_load_store_unit #(
     .MemECC(MemECC),
-    .MemDataWidth(MemDataWidth)
+    .MemDataWidth(MemDataWidth),
+    .RV32A(RV32A)
   ) load_store_unit_i (
     .clk_i (clk_i),
     .rst_ni(rst_ni),
@@ -786,6 +793,7 @@ module ibex_core import ibex_pkg::*; #(
     .lsu_type_i    (lsu_type),
     .lsu_wdata_i   (lsu_wdata),
     .lsu_sign_ext_i(lsu_sign_ext),
+    .lsu_amo_op_i    (lsu_amo_op), // RV32A
 
     .lsu_rdata_o      (rf_wdata_lsu),
     .lsu_rdata_valid_o(lsu_rdata_valid),
@@ -797,8 +805,8 @@ module ibex_core import ibex_pkg::*; #(
     .addr_incr_req_o(lsu_addr_incr_req),
     .addr_last_o    (lsu_addr_last),
 
-
     .lsu_resp_valid_o(lsu_resp_valid),
+
 
     // exception signals
     .load_err_o           (lsu_load_err_raw),
@@ -1064,6 +1072,7 @@ module ibex_core import ibex_pkg::*; #(
     .PMPRstAddr       (PMPRstAddr),
     .PMPRstMsecCfg    (PMPRstMsecCfg),
     .RV32E            (RV32E),
+    .RV32A            (RV32A),
     .RV32M            (RV32M),
     .RV32B            (RV32B)
   ) cs_registers_i (

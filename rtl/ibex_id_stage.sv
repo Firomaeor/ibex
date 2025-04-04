@@ -19,6 +19,7 @@
 
 module ibex_id_stage #(
   parameter bit               RV32E           = 0,
+  parameter bit               RV32A           = 0,
   parameter ibex_pkg::rv32m_e RV32M           = ibex_pkg::RV32MFast,
   parameter ibex_pkg::rv32b_e RV32B           = ibex_pkg::RV32BNone,
   parameter bit               DataIndTiming   = 1'b0,
@@ -123,6 +124,7 @@ module ibex_id_stage #(
 
   input  logic                      lsu_addr_incr_req_i,
   input  logic [31:0]               lsu_addr_last_i,
+  output  ibex_pkg::amo_op_e        lsu_amo_op_o,
 
   // Interrupt signals
   input  logic                      csr_mstatus_mie_i,
@@ -351,6 +353,7 @@ module ibex_id_stage #(
         IMM_B_I:         imm_b = imm_i_type;
         IMM_B_S:         imm_b = imm_s_type;
         IMM_B_U:         imm_b = imm_u_type;
+        IMM_B_ZERO:      imm_b = 32'h0;
         IMM_B_INCR_PC:   imm_b = instr_is_compressed_i ? 32'h2 : 32'h4;
         IMM_B_INCR_ADDR: imm_b = 32'h4;
         default:         imm_b = 32'h4;
@@ -360,6 +363,7 @@ module ibex_id_stage #(
         IMM_B_I,
         IMM_B_S,
         IMM_B_U,
+        IMM_B_ZERO,
         IMM_B_INCR_PC,
         IMM_B_INCR_ADDR})
   end else begin : g_nobtalu
@@ -379,6 +383,7 @@ module ibex_id_stage #(
         IMM_B_B:         imm_b = imm_b_type;
         IMM_B_U:         imm_b = imm_u_type;
         IMM_B_J:         imm_b = imm_j_type;
+        IMM_B_ZERO:      imm_b = 32'h0;
         IMM_B_INCR_PC:   imm_b = instr_is_compressed_i ? 32'h2 : 32'h4;
         IMM_B_INCR_ADDR: imm_b = 32'h4;
         default:         imm_b = 32'h4;
@@ -390,6 +395,7 @@ module ibex_id_stage #(
         IMM_B_B,
         IMM_B_U,
         IMM_B_J,
+        IMM_B_ZERO,
         IMM_B_INCR_PC,
         IMM_B_INCR_ADDR})
   end
@@ -435,6 +441,7 @@ module ibex_id_stage #(
 
   ibex_decoder #(
     .RV32E          (RV32E),
+    .RV32A          (RV32A),
     .RV32M          (RV32M),
     .RV32B          (RV32B),
     .BranchTargetALU(BranchTargetALU)
@@ -506,6 +513,7 @@ module ibex_id_stage #(
     .data_we_o            (lsu_we),
     .data_type_o          (lsu_type),
     .data_sign_extension_o(lsu_sign_ext),
+    .data_amo_op_o        (lsu_amo_op_o),
 
     // jump/branches
     .jump_in_dec_o  (jump_in_dec),

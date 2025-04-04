@@ -699,6 +699,21 @@ module ibex_tracer (
     end
   endfunction
 
+  function automatic void decode_atomic_insn(input string mnemonic);
+    logic  aq, rl;
+
+    aq = rvfi_insn[26];
+    rl = rvfi_insn[25];
+
+    if (aq || rl) mnemonic = {mnemonic, "."};
+    if (aq) mnemonic = {mnemonic, "aq"};
+    if (rl) mnemonic = {mnemonic, "rl"};
+
+    data_accessed = RS1 | RS2 | RD | MEM;
+    decoded_str = $sformatf("%s\tx%0d,x%0d,x%0d", mnemonic, rvfi_rd_addr, rvfi_rs1_addr, rvfi_rs2_addr);
+  
+  endfunction
+
   function automatic string get_fence_description(logic [3:0] bits);
     string desc = "";
     if (bits[3]) begin
@@ -914,6 +929,18 @@ module ibex_tracer (
         // LOAD & STORE
         INSN_LOAD:       decode_load_insn();
         INSN_STORE:      decode_store_insn();
+        // RV32A
+        INSN_LR:         decode_atomic_insn("lr.w");
+        INSN_SC:         decode_atomic_insn("sc.w");
+        INSN_AMOSWAP:    decode_atomic_insn("amoswap.w");
+        INSN_AMOADD:     decode_atomic_insn("amoadd.w");
+        INSN_AMOXOR:     decode_atomic_insn("amoxor.w");
+        INSN_AMOAND:     decode_atomic_insn("amoand.w");
+        INSN_AMOOR:      decode_atomic_insn("amoor.w");
+        INSN_AMOMIN:     decode_atomic_insn("amomin.w");
+        INSN_AMOMAX:     decode_atomic_insn("amomax.w");
+        INSN_AMOMINU:    decode_atomic_insn("amominu.w");
+        INSN_AMOMAXU:    decode_atomic_insn("amomaxu.w");
         // MISC-MEM
         INSN_FENCE:      decode_fence();
         INSN_FENCEI:     decode_mnemonic("fence.i");

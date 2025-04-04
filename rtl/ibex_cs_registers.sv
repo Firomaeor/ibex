@@ -25,6 +25,7 @@ module ibex_cs_registers #(
   parameter logic [33:0]            PMPRstAddr[16]    = ibex_pkg::PmpAddrRst,
   parameter ibex_pkg::pmp_mseccfg_t PMPRstMsecCfg     = ibex_pkg::PmpMseccfgRst,
   parameter bit                     RV32E             = 0,
+  parameter bit                     RV32A             = 0,
   parameter ibex_pkg::rv32m_e RV32M                   = ibex_pkg::RV32MFast,
   parameter ibex_pkg::rv32b_e RV32B                   = ibex_pkg::RV32BNone
 ) (
@@ -149,7 +150,7 @@ module ibex_cs_registers #(
 
   // misa
   localparam logic [31:0] MISA_VALUE =
-      (0                 <<  0)  // A - Atomic Instructions extension
+      (32'(RV32A)        <<  0)  // A - Atomic Instructions extension
     | (0                 <<  1)  // B - Bit-Manipulation extension
     | (1                 <<  2)  // C - Compressed extension
     | (0                 <<  3)  // D - Double precision floating-point extension

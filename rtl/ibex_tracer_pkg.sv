@@ -296,6 +296,19 @@ package ibex_tracer_pkg;
   parameter logic [31:0] INSN_LOAD    = {25'h?,                            {OPCODE_LOAD } };
   parameter logic [31:0] INSN_STORE   = {25'h?,                            {OPCODE_STORE} };
 
+  // RV32A
+  parameter logic [31:0] INSN_LR        = { 5'b00010, 2'h?, 5'h?, 5'h?, 3'b010, 5'h?, {OPCODE_AMO} };
+  parameter logic [31:0] INSN_SC        = { 5'b00011, 2'h?, 5'h?, 5'h?, 3'b010, 5'h?, {OPCODE_AMO} };
+  parameter logic [31:0] INSN_AMOSWAP   = { 5'b00001, 2'h?, 5'h?, 5'h?, 3'b010, 5'h?, {OPCODE_AMO} };
+  parameter logic [31:0] INSN_AMOADD    = { 5'b00000, 2'h?, 5'h?, 5'h?, 3'b010, 5'h?, {OPCODE_AMO} };
+  parameter logic [31:0] INSN_AMOXOR    = { 5'b00100, 2'h?, 5'h?, 5'h?, 3'b010, 5'h?, {OPCODE_AMO} };
+  parameter logic [31:0] INSN_AMOAND    = { 5'b01100, 2'h?, 5'h?, 5'h?, 3'b010, 5'h?, {OPCODE_AMO} };
+  parameter logic [31:0] INSN_AMOOR     = { 5'b01000, 2'h?, 5'h?, 5'h?, 3'b010, 5'h?, {OPCODE_AMO} };
+  parameter logic [31:0] INSN_AMOMIN    = { 5'b10000, 2'h?, 5'h?, 5'h?, 3'b010, 5'h?, {OPCODE_AMO} };
+  parameter logic [31:0] INSN_AMOMAX    = { 5'b10100, 2'h?, 5'h?, 5'h?, 3'b010, 5'h?, {OPCODE_AMO} };
+  parameter logic [31:0] INSN_AMOMINU   = { 5'b11000, 2'h?, 5'h?, 5'h?, 3'b010, 5'h?, {OPCODE_AMO} };
+  parameter logic [31:0] INSN_AMOMAXU   = { 5'b11100, 2'h?, 5'h?, 5'h?, 3'b010, 5'h?, {OPCODE_AMO} };
+
   // MISC-MEM
   parameter logic [31:0] INSN_FENCE   = { 17'h?,             3'b000, 5'h?, {OPCODE_MISC_MEM} };
   parameter logic [31:0] INSN_FENCEI  = { 17'h0,             3'b001, 5'h0, {OPCODE_MISC_MEM} };
